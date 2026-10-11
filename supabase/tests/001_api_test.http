@@ -1,0 +1,156 @@
+# =====================================================================
+# JCER E-CELL — Migration 001 API-level staging tests (PostgREST)
+# STATUS: NOT RUN. Requires a STAGING Supabase project with Migration 001
+#   applied and real Auth users. Run with the VS Code "REST Client"
+#   extension (no install) or translate each block to curl.
+#
+# Fill the variables below from the staging project:
+#   @baseUrl   = https://<project-ref>.supabase.co
+#   @anonKey   = the project ANON (public) key  (NEVER the service-role key)
+#   @aJwt/@bJwt/@adminJwt = access_token from a real sign-in of each user
+#   (Sign in via the Auth REST endpoint or the dashboard; copy access_token.)
+#   Replace <STUDENT_A_UUID>/<STUDENT_B_UUID> with the real auth UUIDs.
+#
+# PostgREST maps: GET /rest/v1/<table>, RPC via POST /rest/v1/rpc/<fn>.
+# =====================================================================
+
+@baseUrl = https://REPLACE.supabase.co
+@anonKey = REPLACE_ANON_KEY
+@aJwt = REPLACE_STUDENT_A_ACCESS_TOKEN
+@bJwt = REPLACE_STUDENT_B_ACCESS_TOKEN
+@adminJwt = REPLACE_ADMIN_ACCESS_TOKEN
+@contentType = application/json
+
+### A1. anon reads the public view -> 200, only the 11 public columns.
+###     Expect: 200; objects have slug/full_name/... and NO id/email/usn.
+GET {{baseUrl}}/rest/v1/public_profiles?select=*&limit=1
+apikey: {{anonKey}}
+Authorization: Bearer {{anonKey}}
+
+### A2. anon requests a private column through the view.
+###     Expect: 400 (column does not exist in the view).
+GET {{baseUrl}}/rest/v1/public_profiles?select=email
+apikey: {{anonKey}}
+Authorization: Bearer {{anonKey}}
+
+### A3. anon reads the base profiles table.
+###     Expect: 200 with [] (RLS exposes no rows to anon) — never private data.
+GET {{baseUrl}}/rest/v1/profiles?select=*
+apikey: {{anonKey}}
+Authorization: Bearer {{anonKey}}
+
+### A4. anon writes the base table. Expect: 401/403 (no grant / RLS).
+POST {{baseUrl}}/rest/v1/profiles
+apikey: {{anonKey}}
+Authorization: Bearer {{anonKey}}
+Content-Type: {{contentType}}
+
+{ "full_name": "x" }
+
+### A5. Student A reads own profile -> 200 with exactly one row.
+GET {{baseUrl}}/rest/v1/profiles?select=*&id=eq.<STUDENT_A_UUID>
+apikey: {{anonKey}}
+Authorization: Bearer {{aJwt}}
+
+### A6. Student A reads Student B's profile -> 200 with [] (RLS isolation).
+GET {{baseUrl}}/rest/v1/profiles?select=*&id=eq.<STUDENT_B_UUID>
+apikey: {{anonKey}}
+Authorization: Bearer {{aJwt}}
+
+### A7. Student A directly PATCHes a protected column (status).
+###     Expect: 403 (column not granted). Proves clients cannot self-approve.
+PATCH {{baseUrl}}/rest/v1/profiles?id=eq.<STUDENT_A_UUID>
+apikey: {{anonKey}}
+Authorization: Bearer {{aJwt}}
+Content-Type: {{contentType}}
+Prefer: return=representation
+
+{ "status": "approved" }
+
+### A8. Student A PATCHes an allowed content column -> 200 (one row).
+###     (On an approved profile this also forces pending_review via trigger.)
+PATCH {{baseUrl}}/rest/v1/profiles?id=eq.<STUDENT_A_UUID>
+apikey: {{anonKey}}
+Authorization: Bearer {{aJwt}}
+Content-Type: {{contentType}}
+Prefer: return=representation
+
+{ "bio": "updated via API" }
+
+### A9. Student A submits own profile via RPC -> 200.
+POST {{baseUrl}}/rest/v1/rpc/submit_my_profile
+apikey: {{anonKey}}
+Authorization: Bearer {{aJwt}}
+Content-Type: {{contentType}}
+
+{}
+
+### A10. Student A calls admin_review_profile -> 403 (not admin).
+POST {{baseUrl}}/rest/v1/rpc/admin_review_profile
+apikey: {{anonKey}}
+Authorization: Bearer {{aJwt}}
+Content-Type: {{contentType}}
+
+{ "p_profile_id": "<STUDENT_B_UUID>", "p_status": "approved", "p_reviewed_updated_at": "2000-01-01T00:00:00Z" }
+
+### -------------------------------------------------------------------
+### SEQUENCING for A11-A15 — run in order; the profile's status evolves:
+###   A11 requires <STUDENT_A_UUID> to be 'pending_review'. If it is not,
+###       first submit it: POST /rest/v1/rpc/submit_my_profile (as Student A).
+###   A12 rejects it -> status becomes 'rejected'.
+###   Before A15, RESUBMIT to 'pending_review' (POST /rest/v1/rpc/submit_my_profile
+###       as Student A) so A15 exercises the concurrency check, not the
+###       not-pending rejection.
+###   Before A14, the profile must be 'approved' (approve via A11 again).
+###   Reset the profile's status between groups as needed; do not assume the
+###       order alone leaves it in the required state.
+### -------------------------------------------------------------------
+### A11. Admin approves a pending profile via RPC -> 200 (approved row).
+###      First GET the profile's current updated_at (as admin) and paste it into
+###      p_reviewed_updated_at VERBATIM (do not reformat through Date):
+###        GET {{baseUrl}}/rest/v1/profiles?select=updated_at&id=eq.<STUDENT_A_UUID>
+POST {{baseUrl}}/rest/v1/rpc/admin_review_profile
+apikey: {{anonKey}}
+Authorization: Bearer {{adminJwt}}
+Content-Type: {{contentType}}
+
+{ "p_profile_id": "<STUDENT_A_UUID>", "p_status": "approved", "p_reviewed_updated_at": "<STUDENT_A_UPDATED_AT>", "p_is_featured": true }
+
+### A12. Admin rejects with a reason -> 200 (rejected row).
+POST {{baseUrl}}/rest/v1/rpc/admin_review_profile
+apikey: {{anonKey}}
+Authorization: Bearer {{adminJwt}}
+Content-Type: {{contentType}}
+
+{ "p_profile_id": "<STUDENT_A_UUID>", "p_status": "rejected", "p_reviewed_updated_at": "<STUDENT_A_UPDATED_AT>", "p_rejection_reason": "insufficient proof" }
+
+### A13. Admin RPC with null status -> 400 with SQLSTATE 22023 in the body.
+POST {{baseUrl}}/rest/v1/rpc/admin_review_profile
+apikey: {{anonKey}}
+Authorization: Bearer {{adminJwt}}
+Content-Type: {{contentType}}
+
+{ "p_profile_id": "<STUDENT_A_UUID>", "p_status": null, "p_reviewed_updated_at": "2000-01-01T00:00:00Z" }
+
+### A15. Admin reviews with a STALE updated_at -> 400 P0001 "changed"; the
+###      profile stays pending. PRECONDITION: the profile MUST be 'pending_review'
+###      (resubmit it first via submit_my_profile). Use a GENUINELY stale
+###      p_reviewed_updated_at (e.g. an old timestamp like the one below), NOT the
+###      profile's current updated_at, so this exercises the optimistic-concurrency
+###      check rather than the "not pending review" rejection.
+POST {{baseUrl}}/rest/v1/rpc/admin_review_profile
+apikey: {{anonKey}}
+Authorization: Bearer {{adminJwt}}
+Content-Type: {{contentType}}
+
+{ "p_profile_id": "<STUDENT_A_UUID>", "p_status": "approved", "p_reviewed_updated_at": "2000-01-01T00:00:00Z" }
+
+### A14. Student withdraws approved profile via RPC -> 200 (draft row),
+###      then confirm it disappears from public_profiles (re-run A1).
+POST {{baseUrl}}/rest/v1/rpc/withdraw_my_profile
+apikey: {{anonKey}}
+Authorization: Bearer {{aJwt}}
+Content-Type: {{contentType}}
+
+{}
+
