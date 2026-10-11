@@ -22,3 +22,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Environment / secrets — never commit real credentials.
+# .env.example is the only env file that should be tracked.
+.env
+.env.*
+!.env.example
+

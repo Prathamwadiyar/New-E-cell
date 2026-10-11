@@ -1,4 +1,55 @@
+import { supabase } from '../lib/supabase';
+
 const LOCAL_STORAGE_KEY = 'jcer_achiever_profiles_v1';
+
+// ---- Supabase mapping helpers (DB snake_case <-> app camelCase) ----
+const toApp = (row) => {
+  if (!row) return null;
+  return {
+    id: row.id,
+    userId: row.id, // profiles.id IS the auth user id
+    slug: row.slug,
+    fullName: row.full_name,
+    email: row.email,
+    collegeEmail: row.email,
+    usn: row.usn,
+    department: row.department,
+    academicYear: row.academic_year,
+    avatarUrl: row.avatar_url,
+    bio: row.bio,
+    primaryRole: row.primary_role,
+    skills: row.skills || [],
+    collaborationStatus: row.collaboration_status,
+    preferredRoles: row.preferred_roles || [],
+    socialLinks: row.social_links || {},
+    status: row.status,
+    isFeatured: row.is_featured,
+    rejectionReason: row.rejection_reason,
+    submittedAt: row.submitted_at,
+    approvedAt: row.approved_at,
+    updatedAt: row.updated_at,
+    // achievements/gallery persist only after their tables are migrated.
+    achievements: [],
+    gallery: [],
+  };
+};
+
+// Only the CONTENT columns a student may edit directly. Never includes status,
+// review metadata, identity, or timestamps (those are column-grant protected).
+const contentColumns = (p) => ({
+  full_name: p.fullName,
+  usn: p.usn,
+  department: p.department,
+  academic_year: p.academicYear,
+  avatar_url: p.avatarUrl,
+  bio: p.bio,
+  primary_role: p.primaryRole,
+  skills: p.skills || [],
+  collaboration_status: p.collaborationStatus,
+  preferred_roles: p.preferredRoles || [],
+  social_links: p.socialLinks || {},
+});
+
 
 // Initial realistic seed profiles representing JCER student achievers
 export const INITIAL_SEED_PROFILES = [
@@ -470,84 +521,130 @@ const setLocalProfiles = (profiles) => {
 };
 
 /**
- * Fetch all approved profiles for public directory
+ * Fetch all APPROVED public profiles via the approved-only public view.
+ * Anonymous-safe: only the 11 public columns are exposed by the view.
  */
 export const getApprovedProfiles = async () => {
-  const local = getLocalProfiles();
-  return local.filter((p) => p.status === 'approved');
+  const { data, error } = await supabase.from('public_profiles').select('*');
+  if (error) {
+    console.warn('getApprovedProfiles error:', error.message);
+    return [];
+  }
+  return (data || []).map(toApp);
 };
 
 /**
- * Fetch a single profile by slug (e.g. 'chinmay-joshi')
+ * Fetch a single PUBLIC profile by slug (approved-only public view).
  */
 export const getProfileBySlug = async (slug) => {
-  const local = getLocalProfiles();
-  return local.find((p) => p.slug === slug || p.id === slug) || null;
+  const { data, error } = await supabase
+    .from('public_profiles')
+    .select('*')
+    .eq('slug', slug)
+    .maybeSingle();
+  if (error) {
+    console.warn('getProfileBySlug error:', error.message);
+    return null;
+  }
+  return toApp(data);
 };
 
 /**
- * Fetch profile by logged-in User ID
+ * Fetch a profile by user id. RLS returns the caller's own row (or all rows
+ * for admins). Used for private profile editing.
  */
 export const getProfileByUserId = async (userId) => {
   if (!userId) return null;
-  const local = getLocalProfiles();
-  return local.find((p) => p.userId === userId) || null;
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .maybeSingle();
+  if (error) {
+    console.warn('getProfileByUserId error:', error.message);
+    return null;
+  }
+  return toApp(data);
 };
 
 /**
- * Save or update student profile
+ * Save/update the caller's own profile CONTENT columns only.
+ * Status and review metadata are never written here (column-grant protected);
+ * use submitMyProfile()/withdrawMyProfile() for lifecycle transitions.
+ * Note: achievements/gallery persist only after their tables are migrated.
  */
 export const saveProfile = async (profileData) => {
-  const local = getLocalProfiles();
-  const existingIdx = local.findIndex(
-    (p) => p.id === profileData.id || p.userId === profileData.userId || p.slug === profileData.slug
-  );
-
-  const updatedProfile = {
-    ...profileData,
-    updatedAt: new Date().toISOString(),
-  };
-
-  if (existingIdx >= 0) {
-    local[existingIdx] = { ...local[existingIdx], ...updatedProfile };
-  } else {
-    local.push(updatedProfile);
-  }
-  setLocalProfiles(local);
-
-  return updatedProfile;
+  const uid = profileData.userId || profileData.id;
+  if (!uid) throw new Error('Cannot save profile without a user id.');
+  const payload = contentColumns(profileData);
+  const { data, error } = await supabase
+    .from('profiles')
+    .update(payload)
+    .eq('id', uid)
+    .select()
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return toApp(data);
 };
 
 /**
- * Fetch ALL profiles for Admin Dashboard (includes pending_review, rejected, approved, draft)
+ * Fetch ALL profiles for the admin dashboard (RLS: admins see all).
  */
 export const getAllProfilesAdmin = async () => {
-  return getLocalProfiles();
-};
-
-/**
- * Admin action: update profile review status
- */
-export const updateProfileStatus = async (profileId, status, rejectionReason = '') => {
-  const local = getLocalProfiles();
-  const idx = local.findIndex((p) => p.id === profileId);
-  if (idx >= 0) {
-    local[idx].status = status;
-    local[idx].rejectionReason = rejectionReason;
-    if (status === 'approved') {
-      local[idx].approvedAt = new Date().toISOString();
-    }
-    local[idx].updatedAt = new Date().toISOString();
-    setLocalProfiles(local);
-    return local[idx];
+  const { data, error } = await supabase.from('profiles').select('*');
+  if (error) {
+    console.warn('getAllProfilesAdmin error:', error.message);
+    return [];
   }
-  return null;
+  return (data || []).map(toApp);
 };
 
 /**
- * Reset local data to seed (useful for dev/test)
+ * Admin action: approve/reject via the secure admin_review_profile RPC.
+ * status must be 'approved' or 'rejected'. RPC enforces admin authorization.
  */
-export const resetToSeedProfiles = () => {
-  localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(INITIAL_SEED_PROFILES));
-  return INITIAL_SEED_PROFILES;
+export const updateProfileStatus = async (
+  profileId,
+  status,
+  rejectionReason = '',
+  reviewedUpdatedAt
+) => {
+  const { data, error } = await supabase.rpc('admin_review_profile', {
+    p_profile_id: profileId,
+    p_status: status,
+    // Optimistic concurrency: pass the reviewed version's updated_at verbatim.
+    // Do NOT reformat through Date — timestamp precision must be preserved.
+    p_reviewed_updated_at: reviewedUpdatedAt,
+    p_rejection_reason: rejectionReason || null,
+  });
+  if (error) throw new Error(error.message);
+  return toApp(data);
 };
+
+/**
+ * Student submit / resubmit (draft|rejected -> pending_review).
+ */
+export const submitMyProfile = async () => {
+  const { data, error } = await supabase.rpc('submit_my_profile');
+  if (error) throw new Error(error.message);
+  return toApp(data);
+};
+
+/**
+ * Student withdraw (approved -> draft).
+ */
+export const withdrawMyProfile = async () => {
+  const { data, error } = await supabase.rpc('withdraw_my_profile');
+  if (error) throw new Error(error.message);
+  return toApp(data);
+};
+
+/**
+ * Deprecated in Supabase mode: there is no local seed to reset.
+ * Kept as a safe no-op so existing imports do not break.
+ */
+export const resetToSeedProfiles = async () => {
+  console.warn('resetToSeedProfiles is disabled in Supabase mode.');
+  return [];
+};
+

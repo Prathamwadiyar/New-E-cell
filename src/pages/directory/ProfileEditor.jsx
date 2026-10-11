@@ -22,7 +22,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { useDirectoryAuth } from '../../context/DirectoryAuthContext';
-import { saveProfile } from '../../services/directoryStorage';
+import { saveProfile, submitMyProfile, withdrawMyProfile } from '../../services/directoryStorage';
 import {
   DEPARTMENTS,
   ACADEMIC_YEARS,
@@ -233,18 +233,48 @@ const ProfileEditor = () => {
     setErrorMessage('');
 
     try {
-      const updatedData = {
-        ...profile,
-        status: 'pending_review',
-        submittedAt: new Date().toISOString(),
-      };
-      const updated = await saveProfile(updatedData);
-      setProfile(updated);
-      setStudentProfile(updated);
-      setSuccessMessage('Your profile has been submitted for admin verification! Our team will review your proofs.');
+      // Persist latest content edits. saveProfile() returns the row AFTER the
+      // UPDATE, so saved.status reflects any guard-trigger transition: if the
+      // profile was 'approved' and public content changed, the DB guard already
+      // moved it to 'pending_review'. In that case it is already under review —
+      // do NOT call submitMyProfile() again (it only allows draft|rejected).
+      const saved = await saveProfile(profile);
+      setProfile(saved);
+      setStudentProfile(saved);
+      if (saved.status === 'pending_review') {
+        setSuccessMessage(
+          'Your edited profile has been sent for review. It will reappear in the public directory once an administrator re-approves it.'
+        );
+      } else {
+        const updated = await submitMyProfile();
+        setProfile(updated);
+        setStudentProfile(updated);
+        setSuccessMessage('Your profile has been submitted for admin verification! Our team will review your proofs.');
+      }
       setTimeout(() => setSuccessMessage(''), 6000);
     } catch (err) {
-      setErrorMessage('Error submitting profile.');
+      setErrorMessage(err.message || 'Error submitting profile.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Withdraw an approved profile from the public directory (approved -> draft).
+  const handleWithdraw = async () => {
+    if (!confirm('Withdraw your approved profile from the public directory? It will return to draft.')) {
+      return;
+    }
+    setSaving(true);
+    setSuccessMessage('');
+    setErrorMessage('');
+    try {
+      const updated = await withdrawMyProfile();
+      setProfile(updated);
+      setStudentProfile(updated);
+      setSuccessMessage('Your profile has been withdrawn and is no longer public.');
+      setTimeout(() => setSuccessMessage(''), 6000);
+    } catch (err) {
+      setErrorMessage(err.message || 'Error withdrawing profile.');
     } finally {
       setSaving(false);
     }
@@ -281,6 +311,16 @@ const ProfileEditor = () => {
               <Eye className="w-3.5 h-3.5 text-ecell-glow" />
               Preview Profile
             </Link>
+
+            {profile.status === 'approved' && (
+              <button
+                onClick={handleWithdraw}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-xs font-mono text-amber-300 border border-amber-500/30 transition-colors"
+              >
+                <AlertCircle className="w-3.5 h-3.5" />
+                Withdraw from Directory
+              </button>
+            )}
 
             <button
               onClick={logout}

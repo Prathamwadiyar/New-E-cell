@@ -10,7 +10,6 @@ import {
   Clock,
   Eye,
   AlertTriangle,
-  RotateCcw,
   LogOut,
   UserCheck,
   Award,
@@ -21,15 +20,12 @@ import { useDirectoryAuth } from '../../context/DirectoryAuthContext';
 import {
   getAllProfilesAdmin,
   updateProfileStatus,
-  resetToSeedProfiles,
 } from '../../services/directoryStorage';
 import AdminReviewModal from '../../components/directory/AdminReviewModal';
 
 const AdminDashboard = () => {
-  const { isAdmin, adminLogin, adminLogout } = useDirectoryAuth();
+  const { isAdmin, logout } = useDirectoryAuth();
 
-  const [passcode, setPasscode] = useState('');
-  const [authError, setAuthError] = useState('');
   const [profiles, setProfiles] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -53,35 +49,48 @@ const AdminDashboard = () => {
     }
   }, [isAdmin]);
 
-  // Handle Admin Passcode Login
-  const handleAdminAuth = (e) => {
-    e.preventDefault();
-    setAuthError('');
-    const res = adminLogin(passcode);
-    if (!res.success) {
-      setAuthError(res.error);
+  // Resolve the updated_at of the profile version currently shown to the admin
+  // (from the loaded list, or the open review modal). Passed verbatim to the
+  // RPC for optimistic concurrency — never reformatted through Date.
+  const resolveReviewedUpdatedAt = (profileId) => {
+    const p = profiles.find((x) => x.id === profileId) || selectedProfile;
+    return p?.updatedAt;
+  };
+
+  // Profile status actions. On failure — including a stale-version concurrency
+  // conflict — surface a clear error and refresh the list so the admin reviews
+  // the latest version. A failed review is never treated as successful.
+  const handleApprove = async (profileId) => {
+    try {
+      await updateProfileStatus(profileId, 'approved', '', resolveReviewedUpdatedAt(profileId));
+      fetchProfiles();
+    } catch (err) {
+      alert(err.message || 'Failed to approve profile.');
+      fetchProfiles();
     }
   };
 
-  // Profile status actions
-  const handleApprove = async (profileId) => {
-    await updateProfileStatus(profileId, 'approved');
-    fetchProfiles();
-  };
-
   const handleReject = async (profileId, reason) => {
-    await updateProfileStatus(profileId, 'rejected', reason);
-    fetchProfiles();
+    try {
+      await updateProfileStatus(profileId, 'rejected', reason, resolveReviewedUpdatedAt(profileId));
+      fetchProfiles();
+    } catch (err) {
+      alert(err.message || 'Failed to reject profile.');
+      fetchProfiles();
+    }
   };
 
   const handleSuspend = async (profileId) => {
-    await updateProfileStatus(profileId, 'rejected', 'Profile suspended by administrator.');
-    fetchProfiles();
-  };
-
-  const handleResetData = () => {
-    if (confirm('Reset directory to initial verified seed profiles?')) {
-      resetToSeedProfiles();
+    try {
+      await updateProfileStatus(
+        profileId,
+        'rejected',
+        'Profile suspended by administrator.',
+        resolveReviewedUpdatedAt(profileId)
+      );
+      fetchProfiles();
+    } catch (err) {
+      alert(err.message || 'Failed to suspend profile.');
       fetchProfiles();
     }
   };
@@ -116,54 +125,35 @@ const AdminDashboard = () => {
     });
   }, [profiles, activeTab, searchQuery]);
 
-  // LOGIN SCREEN IF NOT ADMIN
+  // ACCESS GUARD — admin access is enforced by the database (user_roles), not
+  // a frontend passcode. Non-admins see a denial screen with a sign-in link.
   if (!isAdmin) {
     return (
       <div className="min-h-screen bg-transparent text-white pt-28 pb-20 md:pt-36 flex items-center justify-center px-6">
         <div className="w-full max-w-md p-8 rounded-3xl bg-ecell-bg2 border border-white/10 shadow-2xl text-center space-y-6">
-          <div className="w-12 h-12 rounded-2xl bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 flex items-center justify-center mx-auto">
-            <Lock className="w-6 h-6" />
+          <div className="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center mx-auto">
+            <ShieldCheck className="w-6 h-6" />
           </div>
 
           <div>
-            <span className="text-xs font-mono uppercase tracking-widest text-yellow-400 font-semibold block mb-1">
-              Restricted Access
+            <span className="text-xs font-mono uppercase tracking-widest text-rose-400 font-semibold block mb-1">
+              Restricted
             </span>
             <h1 className="font-sora text-2xl font-bold uppercase text-white">
-              Admin Verification Portal
+              Administrator Access Required
             </h1>
             <p className="text-xs text-ecell-gray/70 font-mono mt-1 leading-relaxed">
-              Enter the authorized institutional key to access student verification records.
+              This area is limited to authorized JCER administrators. Sign in with an
+              authorized administrator account to review student profiles.
             </p>
           </div>
 
-          {authError && (
-            <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-500/30 text-xs font-mono text-rose-300">
-              {authError}
-            </div>
-          )}
-
-          <form onSubmit={handleAdminAuth} className="space-y-4">
-            <input
-              type="password"
-              required
-              value={passcode}
-              onChange={(e) => setPasscode(e.target.value)}
-              placeholder="Enter Admin Key (e.g. jcer2026)"
-              className="w-full px-4 py-3 rounded-xl bg-white/[0.03] border border-white/10 text-white text-sm font-mono focus:outline-none focus:border-yellow-400 text-center"
-            />
-
-            <button
-              type="submit"
-              className="w-full py-3 rounded-xl bg-yellow-500 hover:bg-yellow-400 text-black font-semibold text-xs font-mono uppercase tracking-wider transition-colors shadow-[0_0_20px_rgba(234,179,8,0.3)]"
-            >
-              Authorize Board Access
-            </button>
-          </form>
-
-          <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 text-[11px] font-mono text-white/50">
-            Internal Note: Default institutional key is <span className="text-yellow-300 font-bold">jcer2026</span>
-          </div>
+          <Link
+            to="/dashboard/login"
+            className="inline-flex items-center justify-center gap-2 w-full py-3 rounded-xl bg-ecell-blue hover:bg-blue-600 text-white font-semibold text-xs font-mono uppercase tracking-wider transition-colors"
+          >
+            Sign In
+          </Link>
         </div>
       </div>
     );
@@ -189,15 +179,6 @@ const AdminDashboard = () => {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <button
-              onClick={handleResetData}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-xs font-mono text-white/80 border border-white/10 transition-colors"
-              title="Reset to Seed Data"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              Reset Seed Data
-            </button>
-
             <Link
               to="/directory"
               className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-xs font-mono text-white/80 border border-white/10 transition-colors"
@@ -207,11 +188,11 @@ const AdminDashboard = () => {
             </Link>
 
             <button
-              onClick={adminLogout}
+              onClick={logout}
               className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 text-xs font-mono text-rose-300 border border-rose-500/30 transition-colors"
             >
               <LogOut className="w-3.5 h-3.5" />
-              Exit Admin
+              Sign Out
             </button>
           </div>
         </div>
