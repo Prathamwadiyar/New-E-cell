@@ -1,13 +1,17 @@
 import { useState, useEffect } from 'react';
 import { NavLink, Link, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Menu, X } from 'lucide-react';
+import { Menu, X, User } from 'lucide-react';
 import logoImg from '../../assets/logo.png';
+import { useDirectoryAuth } from '../../context/DirectoryAuthContext';
 
 const navLinks = [
   { to: '/', label: 'Home' },
   { to: '/about', label: 'About Us' },
-  { to: '/gallery', label: 'Gallery' },
+  { to: '/directory', label: 'Directory' },
+  { to: '/opportunities', label: 'Opportunities' },
+  { to: '/projects', label: 'Projects' },
+  { to: '/resources', label: 'Resources' },
   { to: '/team', label: 'Meet Our Team' },
   { to: '/blog', label: 'Blogs' },
   { to: '/contact', label: 'Contact' },
@@ -17,6 +21,7 @@ const Header = () => {
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
+  const { currentUser } = useDirectoryAuth();
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 60);
@@ -37,37 +42,48 @@ const Header = () => {
           transition={{ duration: 0.7, ease: 'easeOut' }}
           className={`transition-all duration-700 ${
             scrolled
-              ? 'w-auto mx-auto px-6 py-2.5 rounded-2xl bg-black/80 backdrop-blur-2xl border border-white/[0.08] shadow-[0_4px_32px_rgba(0,0,0,0.6)]'
+              ? 'w-auto mx-auto px-5 lg:px-6 py-2 rounded-2xl bg-black/85 backdrop-blur-2xl border border-white/[0.08] shadow-[0_4px_32px_rgba(0,0,0,0.6)]'
               : 'w-full px-6 lg:px-10 py-2 bg-transparent border-b border-transparent'
           }`}
-          style={{ maxWidth: scrolled ? '1020px' : '100%' }}
+          style={{ maxWidth: scrolled ? '1180px' : '100%' }}
         >
-          <div className={`flex items-center justify-between transition-all duration-700 w-full ${scrolled ? 'h-13 px-5 gap-6 lg:gap-8' : 'h-16 md:h-24 px-0 gap-4'}`}>
+          <div className={`flex items-center justify-between transition-all duration-700 w-full ${scrolled ? 'h-13 px-2 gap-4 lg:gap-6' : 'h-16 md:h-24 px-0 gap-4'}`}>
 
             {/* Left: Logo */}
-            <Link to="/" className="flex-shrink-0 z-10 mr-2 md:mr-4">
+            <Link to="/" className="flex-shrink-0 z-10 mr-1 md:mr-2">
               <img
                 src={logoImg}
                 alt="E-Cell Logo"
-                className={`object-contain transition-all duration-500 ${scrolled ? 'h-10' : 'h-14 md:h-20 lg:h-24'}`}
+                className={`object-contain transition-all duration-500 ${scrolled ? 'h-9 md:h-10' : 'h-14 md:h-20 lg:h-24'}`}
               />
             </Link>
 
             {/* Center: Desktop Nav */}
-            <nav className={`hidden md:flex flex-1 items-center justify-center transition-all duration-700 ${scrolled ? 'gap-4 lg:gap-7' : 'gap-8'}`}>
+            <nav className={`hidden md:flex flex-1 items-center justify-center transition-all duration-700 ${scrolled ? 'gap-3 lg:gap-5' : 'gap-4 lg:gap-6'}`}>
               {navLinks.map(({ to, label }) => (
                 <NavLink
                   key={to}
                   to={to}
                   end={to === '/'}
                   className={({ isActive }) =>
-                    `nav-link text-xs font-medium tracking-wide whitespace-nowrap ${scrolled ? 'text-[13px]' : ''} ${isActive ? 'active' : ''}`
+                    `nav-link text-xs font-medium tracking-wide whitespace-nowrap ${scrolled ? 'text-[12px]' : ''} ${isActive ? 'active' : ''}`
                   }
                 >
                   {label}
                 </NavLink>
               ))}
             </nav>
+
+            {/* Right: Auth Action Button (Desktop) */}
+            <div className="hidden md:flex items-center gap-3">
+              <Link
+                to={currentUser ? '/dashboard/profile' : '/dashboard/login'}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-mono font-medium tracking-wider text-white bg-white/[0.04] hover:bg-ecell-blue border border-white/10 hover:border-ecell-blue transition-all duration-200 shadow-sm"
+              >
+                <User className="w-3 h-3 text-ecell-light" />
+                {currentUser ? 'My Profile' : 'Sign In'}
+              </Link>
+            </div>
             
             {/* Hamburger (mobile) */}
             <button
@@ -126,6 +142,16 @@ const Header = () => {
                   </NavLink>
                 </motion.div>
               ))}
+
+              <div className="pt-2 border-t border-white/10 mt-1">
+                <Link
+                  to="/dashboard/login"
+                  onClick={() => setMenuOpen(false)}
+                  className="block text-center py-2.5 px-3 rounded-xl text-xs font-mono font-medium text-white bg-ecell-blue hover:bg-blue-600 transition-colors shadow-sm"
+                >
+                  Sign In / Register
+                </Link>
+              </div>
             </div>
           </motion.div>
         )}

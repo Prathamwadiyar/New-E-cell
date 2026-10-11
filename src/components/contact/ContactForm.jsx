@@ -1,8 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Send, CheckCircle } from 'lucide-react';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../../firebase';
 import GlowButton from '../ui/GlowButton';
 
 const fields = [
@@ -24,14 +22,20 @@ const ContactForm = () => {
     setLoading(true);
     
     try {
-      await addDoc(collection(db, 'messages'), {
+      // Simulate client-side message reception and persistence
+      await new Promise((res) => setTimeout(res, 500));
+      const existing = JSON.parse(localStorage.getItem('jcer_contact_messages') || '[]');
+      existing.push({
         ...formData,
-        createdAt: serverTimestamp()
+        id: 'msg-' + Date.now(),
+        createdAt: new Date().toISOString(),
       });
+      localStorage.setItem('jcer_contact_messages', JSON.stringify(existing));
+
       setSubmitted(true);
       setFormData({ name: '', email: '', phone: '', subject: '', message: '' });
     } catch (error) {
-      console.error("Error adding document: ", error);
+      console.error("Error submitting message: ", error);
       alert("Failed to send message. Please try again later.");
     } finally {
       setLoading(false);

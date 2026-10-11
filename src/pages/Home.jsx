@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion';
 import HeroSection from '../components/home/HeroSection';
+import ECellFanout from '../components/home/whatwedo';
 import StatsSection from '../components/home/StatsSection';
 
 const pageVariants = {
@@ -17,6 +18,7 @@ const Home = () => {
       exit="exit"
     >
       <HeroSection />
+      <ECellFanout />
       <StatsSection />
     </motion.div>
   );
